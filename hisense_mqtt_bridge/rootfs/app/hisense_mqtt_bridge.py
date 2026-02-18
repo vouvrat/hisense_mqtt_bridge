@@ -52,6 +52,167 @@ if not TV_IP:
 logger.info(f"Configuration chargée - TV IP: {TV_IP}")
 
 class HisenseTV:
+    """Gestion de la connexion WebSocket avec la TV Hisense"""
+    
+    def __init__(self, ip, port=36669, use_ssl=False):
+        self.ip = ip
+        self.port = port
+        self.use_ssl = use_ssl
+        self.ws = None
+        self.ws_thread = None
+        self.connected = False
+        self.state = {
+            'power': 'OFF',
+            'volume': 0,
+            'muted': False,
+            'source': None,
+            'channel': None,
+            'app': None
+        }
+    
+    def connect(self):
+        """Connexion WebSocket à la TV avec auto-détection du port"""
+        ports_to_try = [
+            (self.port, self.use_ssl),  # Port configuré
+            (36669, False),              # Port standard
+            (36670, False),              # Port alternatif
+            (36870, True),               # Port SSL
+        ]
+        
+        # Éviter les doublons
+        seen = set()
+        unique_ports = []
+        for port, ssl in ports_to_try:
+            key = (port, ssl)
+            if key not in seen:
+                seen.add(key)
+                unique_ports.append((port, ssl))
+        
+        for port, use_ssl in unique_ports:
+            try:
+                protocol = "wss" if use_ssl else "ws"
+                url = f"{protocol}://{self.ip}:{port}"
+                
+                logger.info(f"Tentative de connexion: {url}")
+                
+                self.ws = websocket.WebSocketApp(
+                    url,
+                    on_open=self.on_open,
+                    on_message=self.on_message,
+                    on_error=self.on_error,
+                    on_close=self.on_close
+                )
+                
+                # Configuration SSL
+                run_kwargs = {}
+                if use_ssl:
+                    run_kwargs['sslopt'] = {"cert_reqs": ssl.CERT_NONE}
+                
+                # Lancement du thread
+                self.ws_thread = Thread(
+                    target=self.ws.run_forever,
+                    kwargs=run_kwargs,
+                    daemon=True
+                )
+                self.ws_thread.start()
+                
+                # Attente connexion
+                timeout = 5
+                start = time.time()
+                while not self.connected and (time.time() - start) < timeout:
+                    time.sleep(0.1)
+                
+                if self.connected:
+                    logger.info(f"✅ Connexion réussie sur {url}")
+                    self.port = port
+                    self.use_ssl = use_ssl
+                    return True
+                else:
+                    logger.warning(f"⏱️ Timeout sur {url}")
+                    if self.ws:
+                        self.ws.close()
+                    time.sleep(1)
+                    
+            except Exception as e:
+                logger.warning(f"❌ Échec sur {port}: {e}")
+                if self.ws:
+                    try:
+                        self.ws.close()
+                    except:
+                        pass
+                time.sleep(1)
+                continue
+        
+        logger.error("❌ Impossible de connecter sur aucun port")
+        return False
+    
+    def on_open(self, ws):
+        """Callback ouverture WebSocket"""
+        logger.info("WebSocket ouvert")
+        self.connected = True
+        
+        # Authentification si nécessaire
+        auth_msg = {
+            "action": "authenticate",
+            "token": ""
+        }
+        self.send_command(auth_msg)
+    
+    def on_message(self, ws, message):
+        """Callback réception message"""
+        try:
+            data = json.loads(message)
+            logger.debug(f"Message reçu: {data}")
+            
+            # Mise à jour de l'état
+            if 'power' in data:
+                self.state['power'] = data['power']
+            if 'volume' in data:
+                self.state['volume'] = data['volume']
+            if 'muted' in data:
+                self.state['muted'] = data['muted']
+            if 'source' in data:
+                self.state['source'] = data['source']
+                
+        except json.JSONDecodeError:
+            logger.warning(f"Message non-JSON reçu: {message}")
+    
+    def on_error(self, ws, error):
+        """Callback erreur WebSocket"""
+        logger.error(f"Erreur WebSocket: {error}")
+        self.connected = False
+    
+    def on_close(self, ws, close_status_code, close_msg):
+        """Callback fermeture WebSocket"""
+        logger.warning(f"Connexion fermée: {close_status_code} - {close_msg}")
+        self.connected = False
+    
+    def send_command(self, command):
+        """Envoi d'une commande à la TV"""
+        if not self.connected or not self.ws:
+            logger.warning("TV non connectée, impossible d'envoyer la commande")
+            return False
+        
+        try:
+            if isinstance(command, dict):
+                command = json.dumps(command)
+            self.ws.send(command)
+            logger.debug(f"Commande envoyée: {command}")
+            return True
+        except Exception as e:
+            logger.error(f"Erreur envoi commande: {e}")
+            return False
+    
+    def disconnect(self):
+        """Déconnexion de la TV"""
+        self.connected = False
+        if self.ws:
+            try:
+                self.ws.close()
+            except:
+                pass
+        logger.info("Déconnexion de la TV")
+
     """Classe pour gérer la communication avec la TV Hisense"""
     
     def __init__(self, ip_address, use_ssl=True):
