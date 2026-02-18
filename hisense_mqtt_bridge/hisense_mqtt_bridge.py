@@ -19,6 +19,19 @@ from Crypto.Util.Padding import pad, unpad
 import base64
 import hashlib
 
+# Configuration depuis les variables d'environnement
+MQTT_BROKER = os.getenv('MQTT_BROKER', 'localhost')
+MQTT_PORT = int(os.getenv('MQTT_PORT', '1883'))
+MQTT_USER = os.getenv('MQTT_USER', '')
+MQTT_PASSWORD = os.getenv('MQTT_PASSWORD', '')
+MQTT_TOPIC_PREFIX = os.getenv('MQTT_TOPIC_PREFIX', 'hisense_tv')
+TV_IP = os.getenv('TV_IP', '')
+TV_NAME = os.getenv('TV_NAME', 'salon')
+SSL_ENABLED = os.getenv('SSL_ENABLED', 'true').lower() == 'true'
+AUTO_DISCOVERY = os.getenv('AUTO_DISCOVERY', 'true').lower() == 'true'
+SCAN_INTERVAL = int(os.getenv('SCAN_INTERVAL', '30'))
+LOG_LEVEL = os.getenv('LOG_LEVEL', 'info').upper()
+
 # Configuration du logging
 LOG_LEVEL = os.getenv('LOG_LEVEL', 'info').upper()
 logging.basicConfig(
@@ -26,6 +39,17 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger('HisenseMQTTBridge')
+
+# Validation immédiate
+if not TV_IP:
+    logger.error("TV_IP non défini!")
+    logger.error("Variables d'environnement disponibles:")
+    for key, value in os.environ.items():
+        if 'TV' in key or 'MQTT' in key:
+            logger.error(f"  {key}={value}")
+    sys.exit(1)
+
+logger.info(f"Configuration chargée - TV IP: {TV_IP}")
 
 class HisenseTV:
     """Classe pour gérer la communication avec la TV Hisense"""
