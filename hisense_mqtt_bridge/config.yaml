@@ -1,39 +1,30 @@
-name: Hisense TV MQTT Bridge
-version: "1.0.0"
+name: "Hisense TV MQTT Bridge"
+version: "1.0.1"
 slug: hisense_mqtt_bridge
-description: Bridge entre TV Hisense et MQTT pour Home Assistant
-url: https://github.com/vouvrat/hisense_mqtt_bridge
+description: "Bridge MQTT pour contrôler une TV Hisense VIDAA"
 arch:
   - aarch64
   - amd64
-  - armhf
   - armv7
-  - i386
 init: false
 startup: application
 boot: auto
-host_network: true
-
-# ⚠️ SUPPRIMER CETTE LIGNE :
-# image: "ghcr.io/your-username/{arch}-hisense-mqtt-bridge"
+hassio_api: true
+homeassistant_api: true
 
 options:
-  mqtt_broker: "core-mosquitto"
+  mqtt_broker: "192.168.1.7"
   mqtt_port: 1883
   mqtt_user: ""
   mqtt_password: ""
   mqtt_topic_prefix: "hisense_tv"
   tv_ip: ""
-  tv_port:
-  name: TV Port
-  description: Port WebSocket de la TV (36669 ou 36670)
-  type: int
-  default: 36670
+  tv_port: 36669
   tv_name: "salon"
-  ssl_enabled: true
+  ssl_enabled: false
   auto_discovery: true
   scan_interval: 30
-  log_level: "info"
+  log_level: "INFO"
 
 schema:
   mqtt_broker: str
@@ -42,13 +33,9 @@ schema:
   mqtt_password: password?
   mqtt_topic_prefix: str
   tv_ip: str
-  tv_port:
-  type: integer
-  default: 36670
-  description: Port de communication avec la TV (par défaut 36669 ou 36670)
+  tv_port: int(1,65535)
   tv_name: str
   ssl_enabled: bool
   auto_discovery: bool
   scan_interval: int(10,300)
-  log_level: list(debug|info|warning|error)
-
+  log_level: list(DEBUG|INFO|WARNING|ERROR)
