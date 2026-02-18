@@ -1,49 +1,43 @@
 #!/usr/bin/with-contenv bashio
-set -e
 
 bashio::log.info "Starting Hisense TV MQTT Bridge..."
 
+# Récupération de la configuration
 MQTT_BROKER=$(bashio::config 'mqtt_broker')
 MQTT_PORT=$(bashio::config 'mqtt_port')
 MQTT_USER=$(bashio::config 'mqtt_user')
 MQTT_PASSWORD=$(bashio::config 'mqtt_password')
 MQTT_TOPIC_PREFIX=$(bashio::config 'mqtt_topic_prefix')
 TV_IP=$(bashio::config 'tv_ip')
+TV_PORT=$(bashio::config 'tv_port')
 TV_NAME=$(bashio::config 'tv_name')
 SSL_ENABLED=$(bashio::config 'ssl_enabled')
 AUTO_DISCOVERY=$(bashio::config 'auto_discovery')
 SCAN_INTERVAL=$(bashio::config 'scan_interval')
-LOG_LEVEL=$(bashio::config 'log_level')
 
-if bashio::var.is_empty "${TV_IP}"; then
-    bashio::log.fatal "TV IP address is required!"
-    bashio::exit.nok "Please configure 'tv_ip' in addon options"
-fi
-
-if bashio::var.is_empty "${MQTT_BROKER}"; then
-    bashio::log.fatal "MQTT broker address is required!"
-    bashio::exit.nok "Please configure 'mqtt_broker' in addon options"
-fi
-
-bashio::log.info "Configuration loaded:"
-bashio::log.info "  MQTT Broker: ${MQTT_BROKER}:${MQTT_PORT}"
-bashio::log.info "  TV IP: ${TV_IP}"
-bashio::log.info "  TV Name: ${TV_NAME}"
-bashio::log.info "  Topic Prefix: ${MQTT_TOPIC_PREFIX}"
-bashio::log.info "  Auto Discovery: ${AUTO_DISCOVERY}"
-bashio::log.info "  Scan Interval: ${SCAN_INTERVAL}s"
-
+# Export des variables
 export MQTT_BROKER
 export MQTT_PORT
 export MQTT_USER
 export MQTT_PASSWORD
 export MQTT_TOPIC_PREFIX
 export TV_IP
+export TV_PORT
 export TV_NAME
 export SSL_ENABLED
 export AUTO_DISCOVERY
 export SCAN_INTERVAL
-export LOG_LEVEL
 
+bashio::log.info "Configuration loaded:"
+bashio::log.info "  MQTT Broker: ${MQTT_BROKER}:${MQTT_PORT}"
+bashio::log.info "  TV IP: ${TV_IP}"
+bashio::log.info "  TV Port: ${TV_PORT}"
+bashio::log.info "  TV Name: ${TV_NAME}"
+bashio::log.info "  Topic Prefix: ${MQTT_TOPIC_PREFIX}"
+bashio::log.info "  Auto Discovery: ${AUTO_DISCOVERY}"
+bashio::log.info "  Scan Interval: ${SCAN_INTERVAL}s"
+
+# Lancement du script Python
 bashio::log.info "Starting bridge..."
-exec python3 /app/hisense_mqtt_bridge.py
+cd /app
+exec python3 hisense_mqtt_bridge.py
