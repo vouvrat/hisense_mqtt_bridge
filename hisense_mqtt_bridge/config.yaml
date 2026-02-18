@@ -25,10 +25,10 @@ options:
   mqtt_topic_prefix: "hisense_tv"
   tv_ip: ""
   tv_port:
-    name: TV Port
-    description: Port WebSocket de la TV (36669 ou 36670)
-    type: int
-    default: 36670
+  name: TV Port
+  description: Port WebSocket de la TV (36669 ou 36670)
+  type: int
+  default: 36670
   tv_name: "salon"
   ssl_enabled: true
   auto_discovery: true
@@ -43,9 +43,9 @@ schema:
   mqtt_topic_prefix: str
   tv_ip: str
   tv_port:
-    type: integer
-    default: 36670
-    description: Port de communication avec la TV (par défaut 36669 ou 36670)
+  type: integer
+  default: 36670
+  description: Port de communication avec la TV (par défaut 36669 ou 36670)
   tv_name: str
   ssl_enabled: bool
   auto_discovery: bool
