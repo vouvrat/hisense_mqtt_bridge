@@ -1,11 +1,8 @@
 #!/usr/bin/with-contenv bashio
-# shellcheck shell=bash
-
 set -e
 
 bashio::log.info "Starting Hisense TV MQTT Bridge..."
 
- Récupération de la configuration
 MQTT_BROKER=$(bashio::config 'mqtt_broker')
 MQTT_PORT=$(bashio::config 'mqtt_port')
 MQTT_USER=$(bashio::config 'mqtt_user')
@@ -18,19 +15,17 @@ AUTO_DISCOVERY=$(bashio::config 'auto_discovery')
 SCAN_INTERVAL=$(bashio::config 'scan_interval')
 LOG_LEVEL=$(bashio::config 'log_level')
 
-# Validation
 if bashio::var.is_empty "${TV_IP}"; then
-    bashio::log.fatal "L'adresse IP de la TV est obligatoire!"
-    bashio::exit.nok "Veuillez configurer 'tv_ip' dans les options"
+    bashio::log.fatal "TV IP address is required!"
+    bashio::exit.nok "Please configure 'tv_ip' in addon options"
 fi
 
 if bashio::var.is_empty "${MQTT_BROKER}"; then
-    bashio::log.fatal "L'adresse du broker MQTT est obligatoire!"
-    bashio::exit.nok "Veuillez configurer 'mqtt_broker' dans les options"
+    bashio::log.fatal "MQTT broker address is required!"
+    bashio::exit.nok "Please configure 'mqtt_broker' in addon options"
 fi
 
-# Affichage de la configuration
-bashio::log.info "Configuration chargée:"
+bashio::log.info "Configuration loaded:"
 bashio::log.info "  MQTT Broker: ${MQTT_BROKER}:${MQTT_PORT}"
 bashio::log.info "  TV IP: ${TV_IP}"
 bashio::log.info "  TV Name: ${TV_NAME}"
@@ -38,7 +33,6 @@ bashio::log.info "  Topic Prefix: ${MQTT_TOPIC_PREFIX}"
 bashio::log.info "  Auto Discovery: ${AUTO_DISCOVERY}"
 bashio::log.info "  Scan Interval: ${SCAN_INTERVAL}s"
 
-# Export des variables pour le script Python
 export MQTT_BROKER
 export MQTT_PORT
 export MQTT_USER
@@ -51,6 +45,5 @@ export AUTO_DISCOVERY
 export SCAN_INTERVAL
 export LOG_LEVEL
 
-# Lancement du script Python
-bashio::log.info "Lancement du bridge..."
+bashio::log.info "Starting bridge..."
 exec python3 /app/hisense_mqtt_bridge.py
