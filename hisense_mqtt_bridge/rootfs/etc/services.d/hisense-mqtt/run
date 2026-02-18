@@ -40,4 +40,4 @@ bashio::log.info "  Scan Interval: ${SCAN_INTERVAL}s"
 # Lancement du script Python
 bashio::log.info "Starting bridge..."
 cd /app
-exec python3 hisense_mqtt_bridge.py
+exec python3 -u hisense_mqtt_bridge.py
