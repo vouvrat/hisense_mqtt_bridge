@@ -11,9 +11,21 @@ MQTT_TOPIC_PREFIX=$(bashio::config 'mqtt_topic_prefix')
 TV_IP=$(bashio::config 'tv_ip')
 TV_PORT=$(bashio::config 'tv_port')
 TV_NAME=$(bashio::config 'tv_name')
-SSL_ENABLED=$(bashio::config 'ssl_enabled')
+TV_SSL=$(bashio::config 'tv_ssl')
 AUTO_DISCOVERY=$(bashio::config 'auto_discovery')
 SCAN_INTERVAL=$(bashio::config 'scan_interval')
+LOG_LEVEL=$(bashio::config 'log_level')
+
+# Validation des paramètres obligatoires
+if [ -z "${TV_IP}" ]; then
+    bashio::log.fatal "❌ TV_IP is required!"
+    exit 1
+fi
+
+if [ -z "${MQTT_BROKER}" ]; then
+    bashio::log.fatal "❌ MQTT_BROKER is required!"
+    exit 1
+fi
 
 # Export des variables
 export MQTT_BROKER
@@ -24,20 +36,22 @@ export MQTT_TOPIC_PREFIX
 export TV_IP
 export TV_PORT
 export TV_NAME
-export SSL_ENABLED
+export TV_SSL
 export AUTO_DISCOVERY
 export SCAN_INTERVAL
+export LOG_LEVEL
 
-bashio::log.info "Configuration loaded:"
-bashio::log.info "  MQTT Broker: ${MQTT_BROKER}:${MQTT_PORT}"
-bashio::log.info "  TV IP: ${TV_IP}"
-bashio::log.info "  TV Port: ${TV_PORT}"
-bashio::log.info "  TV Name: ${TV_NAME}"
-bashio::log.info "  Topic Prefix: ${MQTT_TOPIC_PREFIX}"
-bashio::log.info "  Auto Discovery: ${AUTO_DISCOVERY}"
-bashio::log.info "  Scan Interval: ${SCAN_INTERVAL}s"
+bashio::log.info "✅ Configuration loaded:"
+bashio::log.info "   MQTT Broker: ${MQTT_BROKER}:${MQTT_PORT}"
+bashio::log.info "   TV IP: ${TV_IP}:${TV_PORT}"
+bashio::log.info "   TV Name: ${TV_NAME}"
+bashio::log.info "   SSL: ${TV_SSL}"
+bashio::log.info "   Topic Prefix: ${MQTT_TOPIC_PREFIX}"
+bashio::log.info "   Auto Discovery: ${AUTO_DISCOVERY}"
+bashio::log.info "   Scan Interval: ${SCAN_INTERVAL}s"
+bashio::log.info "   Log Level: ${LOG_LEVEL}"
 
 # Lancement du script Python
-bashio::log.info "Starting bridge..."
+bashio::log.info "🚀 Starting Hisense TV MQTT Bridge..."
 cd /app
 exec python3 -u hisense_mqtt_bridge.py

@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+"""
+Hisense TV MQTT Bridge - Support for Vidaa U
+Communicates with Hisense VIDAA-U TVs via WebSocket and bridges to MQTT
+"""
 
 import os
 import sys
@@ -8,59 +12,86 @@ import time
 import logging
 import ssl
 import socket
-import asyncio
+import hashlib
+import base64
 from threading import Thread
 from datetime import datetime
+from typing import Optional, Dict, Any
 
 import paho.mqtt.client as mqtt
 import websocket
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad, unpad
-import base64
-import hashlib
 
-# Configuration depuis les variables d'environnement
-MQTT_BROKER = os.getenv('MQTT_BROKER', 'localhost')
-MQTT_PORT = int(os.getenv('MQTT_PORT', '1883'))
-MQTT_USER = os.getenv('MQTT_USER', '')
-MQTT_PASSWORD = os.getenv('MQTT_PASSWORD', '')
-MQTT_TOPIC_PREFIX = os.getenv('MQTT_TOPIC_PREFIX', 'hisense_tv')
-TV_IP = os.getenv('TV_IP', '')
-TV_NAME = os.getenv('TV_NAME', 'salon')
-SSL_ENABLED = os.getenv('SSL_ENABLED', 'true').lower() == 'true'
-AUTO_DISCOVERY = os.getenv('AUTO_DISCOVERY', 'true').lower() == 'true'
-SCAN_INTERVAL = int(os.getenv('SCAN_INTERVAL', '30'))
-LOG_LEVEL = os.getenv('LOG_LEVEL', 'info').upper()
+# ============================================================================
+# CONFIGURATION
+# ============================================================================
 
-# Configuration du logging
-LOG_LEVEL = os.getenv('LOG_LEVEL', 'info').upper()
+def load_config():
+    """Load configuration from environment variables"""
+    return {
+        'mqtt_broker': os.getenv('MQTT_BROKER', 'localhost'),
+        'mqtt_port': int(os.getenv('MQTT_PORT', '1883')),
+        'mqtt_user': os.getenv('MQTT_USER', ''),
+        'mqtt_password': os.getenv('MQTT_PASSWORD', ''),
+        'mqtt_topic_prefix': os.getenv('MQTT_TOPIC_PREFIX', 'hisense_tv'),
+        'tv_ip': os.getenv('TV_IP', ''),
+        'tv_port': int(os.getenv('TV_PORT', '10001')),
+        'tv_name': os.getenv('TV_NAME', 'salon'),
+        'tv_ssl': os.getenv('TV_SSL', 'false').lower() == 'true',
+        'auto_discovery': os.getenv('AUTO_DISCOVERY', 'true').lower() == 'true',
+        'scan_interval': int(os.getenv('SCAN_INTERVAL', '30')),
+        'log_level': os.getenv('LOG_LEVEL', 'INFO').upper(),
+    }
+
+CONFIG = load_config()
+
+# ============================================================================
+# LOGGING
+# ============================================================================
+
 logging.basicConfig(
-    level=getattr(logging, LOG_LEVEL),
+    level=getattr(logging, CONFIG['log_level']),
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger('HisenseMQTTBridge')
 
-# Validation immédiate
-if not TV_IP:
-    logger.error("TV_IP non défini!")
-    logger.error("Variables d'environnement disponibles:")
-    for key, value in os.environ.items():
-        if 'TV' in key or 'MQTT' in key:
-            logger.error(f"  {key}={value}")
+# ============================================================================
+# VALIDATION
+# ============================================================================
+
+if not CONFIG['tv_ip']:
+    logger.error("❌ TV_IP environment variable is required!")
     sys.exit(1)
 
-logger.info(f"Configuration chargée - TV IP: {TV_IP}")
+logger.info(f"✅ Configuration loaded - TV IP: {CONFIG['tv_ip']}:{CONFIG['tv_port']}")
+
+# ============================================================================
+# HISENSE TV CLASS
+# ============================================================================
 
 class HisenseTV:
-    """Gestion de la connexion WebSocket avec la TV Hisense"""
-    
-    def __init__(self, ip, port=36669, use_ssl=False):
+    """
+    Manages communication with Hisense VIDAA-U TV via WebSocket.
+    Supports:
+    - Port 10001 (standard Vidaa-U)
+    - AES-128-CBC encryption for command protocol
+    - Automatic handshake and authentication
+    """
+
+    def __init__(self, ip: str, port: int = 10001, use_ssl: bool = False):
         self.ip = ip
         self.port = port
         self.use_ssl = use_ssl
-        self.ws = None
-        self.ws_thread = None
+        self.ws: Optional[websocket.WebSocketApp] = None
+        self.ws_thread: Optional[Thread] = None
         self.connected = False
+        
+        # Encryption keys (Vidaa-U default)
+        self.cipher_key = b'0000000000000000'
+        self.cipher_iv = b'0000000000000000'
+        
+        # State
         self.state = {
             'power': 'OFF',
             'volume': 0,
@@ -69,46 +100,52 @@ class HisenseTV:
             'channel': None,
             'app': None
         }
-    
-    def connect(self):
-        """Connexion WebSocket à la TV avec auto-détection du port"""
+
+    def connect(self) -> bool:
+        """
+        Connect to TV via WebSocket with automatic port discovery.
+        Tests multiple ports and protocols if primary fails.
+        """
         ports_to_try = [
-            (self.port, self.use_ssl),  # Port configuré
-            (36669, False),              # Port standard
-            (36670, False),              # Port alternatif
-            (36870, True),               # Port SSL
+            (self.port, self.use_ssl),  # Primary configured port
+            (10001, False),              # Standard Vidaa-U
+            (36669, False),              # Legacy port
+            (36670, False),              # Alternative legacy
+            (36870, True),               # SSL port
         ]
         
-        # Éviter les doublons
+        # Remove duplicates while preserving order
         seen = set()
         unique_ports = []
-        for port, ssl in ports_to_try:
-            key = (port, ssl)
+        for port, use_ssl in ports_to_try:
+            key = (port, use_ssl)
             if key not in seen:
                 seen.add(key)
-                unique_ports.append((port, ssl))
+                unique_ports.append((port, use_ssl))
         
         for port, use_ssl in unique_ports:
+            protocol = "wss" if use_ssl else "ws"
+            url = f"{protocol}://{self.ip}:{port}"
+            
             try:
-                protocol = "wss" if use_ssl else "ws"
-                url = f"{protocol}://{self.ip}:{port}"
-                
-                logger.info(f"Tentative de connexion: {url}")
+                logger.info(f"📡 Attempting connection: {url}")
                 
                 self.ws = websocket.WebSocketApp(
                     url,
-                    on_open=self.on_open,
-                    on_message=self.on_message,
-                    on_error=self.on_error,
-                    on_close=self.on_close
+                    on_open=self._on_open,
+                    on_message=self._on_message,
+                    on_error=self._on_error,
+                    on_close=self._on_close
                 )
                 
-                # Configuration SSL
                 run_kwargs = {}
                 if use_ssl:
-                    run_kwargs['sslopt'] = {"cert_reqs": ssl.CERT_NONE}
+                    run_kwargs['sslopt'] = {
+                        "cert_reqs": ssl.CERT_NONE,
+                        "check_hostname": False,
+                        "ssl_version": ssl.PROTOCOL_TLSv1_2
+                    }
                 
-                # Lancement du thread
                 self.ws_thread = Thread(
                     target=self.ws.run_forever,
                     kwargs=run_kwargs,
@@ -116,335 +153,268 @@ class HisenseTV:
                 )
                 self.ws_thread.start()
                 
-                # Attente connexion
+                # Wait for connection
                 timeout = 5
                 start = time.time()
                 while not self.connected and (time.time() - start) < timeout:
                     time.sleep(0.1)
                 
                 if self.connected:
-                    logger.info(f"✅ Connexion réussie sur {url}")
+                    logger.info(f"✅ Connected to {url}")
                     self.port = port
                     self.use_ssl = use_ssl
                     return True
                 else:
-                    logger.warning(f"⏱️ Timeout sur {url}")
+                    logger.warning(f"⏱️ Connection timeout on {url}")
                     if self.ws:
                         self.ws.close()
                     time.sleep(1)
                     
             except Exception as e:
-                logger.warning(f"❌ Échec sur {port}: {e}")
+                logger.warning(f"❌ Failed on {port}: {e}")
                 if self.ws:
                     try:
                         self.ws.close()
                     except:
                         pass
                 time.sleep(1)
-                continue
         
-        logger.error("❌ Impossible de connecter sur aucun port")
+        logger.error("❌ Failed to connect to TV on any port")
         return False
-    
-    def on_open(self, ws):
-        """Callback ouverture WebSocket"""
-        logger.info("WebSocket ouvert")
-        self.connected = True
-        
-        # Authentification si nécessaire
-        auth_msg = {
-            "action": "authenticate",
-            "token": ""
-        }
-        self.send_command(auth_msg)
-    
-    def on_message(self, ws, message):
-        """Callback réception message"""
-        try:
-            data = json.loads(message)
-            logger.debug(f"Message reçu: {data}")
-            
-            # Mise à jour de l'état
-            if 'power' in data:
-                self.state['power'] = data['power']
-            if 'volume' in data:
-                self.state['volume'] = data['volume']
-            if 'muted' in data:
-                self.state['muted'] = data['muted']
-            if 'source' in data:
-                self.state['source'] = data['source']
-                
-        except json.JSONDecodeError:
-            logger.warning(f"Message non-JSON reçu: {message}")
-    
-    def on_error(self, ws, error):
-        """Callback erreur WebSocket"""
-        logger.error(f"Erreur WebSocket: {error}")
-        self.connected = False
-    
-    def on_close(self, ws, close_status_code, close_msg):
-        """Callback fermeture WebSocket"""
-        logger.warning(f"Connexion fermée: {close_status_code} - {close_msg}")
-        self.connected = False
-    
-    def send_command(self, command):
-        """Envoi d'une commande à la TV"""
-        if not self.connected or not self.ws:
-            logger.warning("TV non connectée, impossible d'envoyer la commande")
-            return False
-        
-        try:
-            if isinstance(command, dict):
-                command = json.dumps(command)
-            self.ws.send(command)
-            logger.debug(f"Commande envoyée: {command}")
-            return True
-        except Exception as e:
-            logger.error(f"Erreur envoi commande: {e}")
-            return False
-    
-    def disconnect(self):
-        """Déconnexion de la TV"""
-        self.connected = False
-        if self.ws:
-            try:
-                self.ws.close()
-            except:
-                pass
-        logger.info("Déconnexion de la TV")
 
-    """Classe pour gérer la communication avec la TV Hisense"""
-    
-    def __init__(self, ip_address, use_ssl=True):
-        self.ip = ip_address
-        self.use_ssl = use_ssl
-        default_port = 36669 if use_ssl else 36670
-        self.port = int(os.getenv('TV_PORT', str(default_port)))
-        self.ws = None
-        self.connected = False
-        self.mac_address = None
-        self.device_id = None
-        
-        # Clés de chiffrement (à adapter selon le modèle)
-        self.key = b'0000000000000000'
-        self.iv = b'0000000000000000'
-        
-        # État de la TV
-        self.state = {
-            'power': 'OFF',
-            'volume': 0,
-            'muted': False,
-            'source': None,
-            'channel': None,
-            'app': None
-        }
-        
-    def connect(self):
-        """Connexion WebSocket à la TV"""
-        try:
-            protocol = "wss" if self.use_ssl else "ws"
-            url = f"{protocol}://{self.ip}:{self.port}"
-            
-            logger.info(f"Connexion à la TV: {url}")
-            
-            if self.use_ssl:
-                self.ws = websocket.WebSocketApp(
-                    url,
-                    on_message=self._on_message,
-                    on_error=self._on_error,
-                    on_close=self._on_close,
-                    on_open=self._on_open
-                )
-                self.ws.run_forever(
-                    sslopt={
-                        "cert_reqs": ssl.CERT_NONE,
-                        "check_hostname": False,
-                        "ssl_version": ssl.PROTOCOL_TLSv1_2
-                    }
-                )
-            else:
-                self.ws = websocket.WebSocketApp(
-                    url,
-                    on_message=self._on_message,
-                    on_error=self._on_error,
-                    on_close=self._on_close,
-                    on_open=self._on_open
-                )
-                self.ws.run_forever()
-                
-        except Exception as e:
-            logger.error(f"Erreur de connexion: {e}")
-            self.connected = False
-            
     def _on_open(self, ws):
-        """Callback lors de l'ouverture de la connexion"""
-        logger.info("Connexion WebSocket établie")
+        """WebSocket connection opened"""
+        logger.info("🔌 WebSocket connection established")
         self.connected = True
         self._authenticate()
-        
-    def _on_message(self, ws, message):
-        """Callback lors de la réception d'un message"""
+
+    def _on_message(self, ws, message: str):
+        """Handle incoming WebSocket message"""
         try:
-            logger.debug(f"Message reçu: {message}")
-            data = json.loads(message)
-            self._process_message(data)
-        except json.JSONDecodeError:
-            logger.warning(f"Message non-JSON reçu: {message}")
-        except Exception as e:
-            logger.error(f"Erreur traitement message: {e}")
+            logger.debug(f"📨 Message received: {message[:200]}")
             
+            # Try to parse as JSON
+            try:
+                data = json.loads(message)
+                self._process_message(data)
+            except json.JSONDecodeError:
+                # Try to decrypt if it looks like base64/encrypted
+                self._try_decrypt_message(message)
+                
+        except Exception as e:
+            logger.error(f"❌ Error processing message: {e}")
+
     def _on_error(self, ws, error):
-        """Callback en cas d'erreur"""
-        logger.error(f"Erreur WebSocket: {error}")
+        """WebSocket error occurred"""
+        logger.error(f"❌ WebSocket error: {error}")
         self.connected = False
-        
+
     def _on_close(self, ws, close_status_code, close_msg):
-        """Callback lors de la fermeture"""
-        logger.warning(f"Connexion fermée: {close_status_code} - {close_msg}")
+        """WebSocket connection closed"""
+        logger.warning(f"🔴 Connection closed: {close_status_code} - {close_msg}")
         self.connected = False
-        
+
     def _authenticate(self):
-        """Authentification avec la TV"""
+        """Perform handshake/authentication with TV"""
         try:
-            # Handshake initial
+            # Initial handshake message
             handshake = {
                 "action": "handshake",
                 "type": "request"
             }
             self._send_command(handshake)
-            
+            logger.info("🔐 Handshake sent")
         except Exception as e:
-            logger.error(f"Erreur d'authentification: {e}")
-            
-    def _encrypt_payload(self, payload):
-        """Chiffrement du payload avec AES"""
+            logger.error(f"❌ Authentication error: {e}")
+
+    def _encrypt_payload(self, payload: str) -> Optional[str]:
+        """Encrypt payload using AES-128-CBC"""
         try:
-            cipher = AES.new(self.key, AES.MODE_CBC, self.iv)
-            padded = pad(payload.encode(), AES.block_size)
+            cipher = AES.new(self.cipher_key, AES.MODE_CBC, self.cipher_iv)
+            padded = pad(payload.encode('utf-8'), AES.block_size)
             encrypted = cipher.encrypt(padded)
-            return base64.b64encode(encrypted).decode()
+            return base64.b64encode(encrypted).decode('utf-8')
         except Exception as e:
-            logger.error(f"Erreur de chiffrement: {e}")
+            logger.error(f"❌ Encryption error: {e}")
             return None
-            
-    def _decrypt_payload(self, encrypted_payload):
-        """Déchiffrement du payload"""
+
+    def _decrypt_payload(self, encrypted_payload: str) -> Optional[str]:
+        """Decrypt payload using AES-128-CBC"""
         try:
-            cipher = AES.new(self.key, AES.MODE_CBC, self.iv)
+            cipher = AES.new(self.cipher_key, AES.MODE_CBC, self.cipher_iv)
             decoded = base64.b64decode(encrypted_payload)
             decrypted = cipher.decrypt(decoded)
             unpadded = unpad(decrypted, AES.block_size)
-            return unpadded.decode()
+            return unpadded.decode('utf-8')
         except Exception as e:
-            logger.error(f"Erreur de déchiffrement: {e}")
+            logger.debug(f"Decryption failed (may not be encrypted): {e}")
             return None
-            
-    def _send_command(self, command):
-        """Envoi d'une commande à la TV"""
-        if not self.connected or not self.ws:
-            logger.warning("TV non connectée, impossible d'envoyer la commande")
-            return False
-            
+
+    def _try_decrypt_message(self, message: str):
+        """Attempt to decrypt encrypted message"""
+        decrypted = self._decrypt_payload(message)
+        if decrypted:
+            try:
+                data = json.loads(decrypted)
+                self._process_message(data)
+            except json.JSONDecodeError:
+                logger.debug(f"Decrypted message is not JSON: {decrypted[:100]}")
+
+    def _process_message(self, data: Dict[str, Any]):
+        """Process received JSON message"""
         try:
-            message = json.dumps(command)
-            logger.debug(f"Envoi commande: {message}")
-            self.ws.send(message)
-            return True
-        except Exception as e:
-            logger.error(f"Erreur envoi commande: {e}")
-            return False
+            action = data.get('action', '').lower()
+            msg_type = data.get('type', '').lower()
             
-    def _process_message(self, data):
-        """Traitement des messages reçus de la TV"""
-        try:
-            action = data.get('action')
-            msg_type = data.get('type')
+            logger.debug(f"📋 Processing action={action}, type={msg_type}")
             
+            # Handshake response
             if action == 'handshake' and msg_type == 'response':
-                logger.info("Handshake réussi")
+                logger.info("✅ Handshake successful")
+                # Update encryption keys if provided
+                if 'cipher' in data:
+                    self._update_cipher(data['cipher'])
                 self._request_state()
                 
-            elif action == 'state':
-                # Mise à jour de l'état
-                if 'power' in data:
-                    self.state['power'] = 'ON' if data['power'] else 'OFF'
-                if 'volume' in data:
-                    self.state['volume'] = data['volume']
-                if 'mute' in data:
-                    self.state['muted'] = data['mute']
-                if 'sourceid' in data:
-                    self.state['source'] = data['sourceid']
-                    
-                logger.debug(f"État mis à jour: {self.state}")
+            # State update
+            elif action == 'state' or 'power' in data:
+                self._update_state(data)
                 
         except Exception as e:
-            logger.error(f"Erreur traitement message: {e}")
-            
+            logger.error(f"❌ Error processing message: {e}")
+
+    def _update_state(self, data: Dict[str, Any]):
+        """Update local state from received data"""
+        if 'power' in data:
+            self.state['power'] = 'ON' if data.get('power') else 'OFF'
+        if 'volume' in data:
+            self.state['volume'] = data.get('volume', 0)
+        if 'mute' in data or 'muted' in data:
+            self.state['muted'] = data.get('mute') or data.get('muted', False)
+        if 'sourceid' in data or 'source' in data:
+            self.state['source'] = data.get('sourceid') or data.get('source')
+        if 'channel' in data:
+            self.state['channel'] = data.get('channel')
+        
+        logger.debug(f"State updated: {self.state}")
+
+    def _update_cipher(self, cipher_data: Dict[str, Any]):
+        """Update encryption keys from TV response"""
+        try:
+            if 'key' in cipher_data:
+                self.cipher_key = base64.b64decode(cipher_data['key'])
+            if 'iv' in cipher_data:
+                self.cipher_iv = base64.b64decode(cipher_data['iv'])
+            logger.info("🔑 Encryption keys updated")
+        except Exception as e:
+            logger.warning(f"Failed to update cipher keys: {e}")
+
     def _request_state(self):
-        """Demande l'état actuel de la TV"""
+        """Request current state from TV"""
         command = {
             "action": "state",
             "type": "request"
         }
         self._send_command(command)
+
+    def _send_command(self, command: Dict[str, Any]) -> bool:
+        """Send command to TV"""
+        if not self.connected or not self.ws:
+            logger.warning("⚠️ TV not connected, cannot send command")
+            return False
         
-    def send_key(self, keycode):
-        """Envoi d'une touche"""
+        try:
+            message = json.dumps(command)
+            logger.debug(f"📤 Sending command: {message}")
+            self.ws.send(message)
+            return True
+        except Exception as e:
+            logger.error(f"❌ Error sending command: {e}")
+            return False
+
+    def send_key(self, keycode: str) -> bool:
+        """Send IR key to TV"""
         command = {
             "action": "sendkey",
             "type": "request",
             "keycode": keycode
         }
         return self._send_command(command)
-        
-    def power_on(self):
-        """Allumer la TV"""
+
+    def power_on(self) -> bool:
+        """Turn TV on"""
         return self.send_key("KEY_POWER")
-        
-    def power_off(self):
-        """Éteindre la TV"""
+
+    def power_off(self) -> bool:
+        """Turn TV off"""
         return self.send_key("KEY_POWER")
-        
-    def volume_up(self):
-        """Augmenter le volume"""
+
+    def volume_up(self) -> bool:
+        """Increase volume"""
         return self.send_key("KEY_VOLUMEUP")
-        
-    def volume_down(self):
-        """Diminuer le volume"""
+
+    def volume_down(self) -> bool:
+        """Decrease volume"""
         return self.send_key("KEY_VOLUMEDOWN")
-        
-    def mute(self):
-        """Couper/rétablir le son"""
+
+    def set_volume(self, level: int) -> bool:
+        """Set volume to specific level (0-100)"""
+        if not 0 <= level <= 100:
+            logger.warning(f"⚠️ Volume level out of range: {level}")
+            return False
+        command = {
+            "action": "setvolume",
+            "type": "request",
+            "volume": level
+        }
+        return self._send_command(command)
+
+    def mute(self) -> bool:
+        """Toggle mute"""
         return self.send_key("KEY_MUTE")
-        
-    def channel_up(self):
-        """Chaîne suivante"""
+
+    def channel_up(self) -> bool:
+        """Next channel"""
         return self.send_key("KEY_CHANNELUP")
-        
-    def channel_down(self):
-        """Chaîne précédente"""
+
+    def channel_down(self) -> bool:
+        """Previous channel"""
         return self.send_key("KEY_CHANNELDOWN")
-        
-    def set_source(self, source):
-        """Changer de source"""
+
+    def set_channel(self, channel: int) -> bool:
+        """Set channel to specific number"""
+        if channel < 0:
+            logger.warning(f"⚠️ Invalid channel number: {channel}")
+            return False
+        command = {
+            "action": "setchannel",
+            "type": "request",
+            "channel": channel
+        }
+        return self._send_command(command)
+
+    def set_source(self, source: str) -> bool:
+        """Change input source"""
         source_map = {
             'HDMI1': 'KEY_HDMI1',
             'HDMI2': 'KEY_HDMI2',
             'HDMI3': 'KEY_HDMI3',
             'HDMI4': 'KEY_HDMI4',
             'TV': 'KEY_TV',
-            'AV': 'KEY_AV'
+            'AV': 'KEY_AV',
+            'DTMB': 'KEY_DTMB',
+            'IPTV': 'KEY_IPTV'
         }
         
         key = source_map.get(source.upper())
         if key:
             return self.send_key(key)
         else:
-            logger.warning(f"Source inconnue: {source}")
+            logger.warning(f"⚠️ Unknown source: {source}")
             return False
-            
-    def navigate(self, direction):
-        """Navigation dans les menus"""
+
+    def navigate(self, direction: str) -> bool:
+        """Navigate menu"""
         direction_map = {
             'UP': 'KEY_UP',
             'DOWN': 'KEY_DOWN',
@@ -460,55 +430,56 @@ class HisenseTV:
         if key:
             return self.send_key(key)
         else:
-            logger.warning(f"Direction inconnue: {direction}")
+            logger.warning(f"⚠️ Unknown direction: {direction}")
             return False
 
+    def disconnect(self):
+        """Disconnect from TV"""
+        self.connected = False
+        if self.ws:
+            try:
+                self.ws.close()
+            except:
+                pass
+        logger.info("✅ TV disconnected")
+
+
+# ============================================================================
+# MQTT BRIDGE CLASS
+# ============================================================================
+
 class MQTTBridge:
-    """Classe pour gérer le pont MQTT"""
-    
-    def __init__(self):
-        self.mqtt_client = None
-        self.tv = None
+    """Manages MQTT to Hisense TV bridge"""
+
+    def __init__(self, config: Dict[str, Any]):
+        self.config = config
+        self.mqtt_client: Optional[mqtt.Client] = None
+        self.tv: Optional[HisenseTV] = None
         self.running = False
         
-        # Configuration depuis variables d'environnement
-        self.mqtt_broker = os.getenv('MQTT_BROKER', 'localhost')
-        self.mqtt_port = int(os.getenv('MQTT_PORT', 1883))
-        self.mqtt_user = os.getenv('MQTT_USER', '')
-        self.mqtt_password = os.getenv('MQTT_PASSWORD', '')
-        self.topic_prefix = os.getenv('MQTT_TOPIC_PREFIX', 'hisense_tv')
-        self.tv_ip = os.getenv('TV_IP')
-        self.tv_name = os.getenv('TV_NAME', 'salon')
-        self.ssl_enabled = os.getenv('SSL_ENABLED', 'true').lower() == 'true'
-        self.auto_discovery = os.getenv('AUTO_DISCOVERY', 'true').lower() == 'true'
-        self.scan_interval = int(os.getenv('SCAN_INTERVAL', 30))
-        
-        # Validation
-        if not self.tv_ip:
-            logger.error("TV_IP non défini!")
-            sys.exit(1)
-            
-        # Topics MQTT
-        self.base_topic = f"{self.topic_prefix}/{self.tv_name}"
+        # Calculate topic base
+        self.base_topic = f"{config['mqtt_topic_prefix']}/{config['tv_name']}"
         self.command_topic = f"{self.base_topic}/command"
         self.state_topic = f"{self.base_topic}/state"
         self.availability_topic = f"{self.base_topic}/availability"
-        
-    def setup_mqtt(self):
-        """Configuration du client MQTT"""
+
+    def setup_mqtt(self) -> bool:
+        """Initialize MQTT client"""
         try:
-            self.mqtt_client = mqtt.Client(client_id=f"hisense_bridge_{self.tv_name}")
+            self.mqtt_client = mqtt.Client(
+                client_id=f"hisense_tv_{self.config['tv_name']}"
+            )
             
-            # Authentification si nécessaire
-            if self.mqtt_user and self.mqtt_password:
-                self.mqtt_client.username_pw_set(self.mqtt_user, self.mqtt_password)
-                
-            # Callbacks
+            if self.config['mqtt_user'] and self.config['mqtt_password']:
+                self.mqtt_client.username_pw_set(
+                    self.config['mqtt_user'],
+                    self.config['mqtt_password']
+                )
+            
             self.mqtt_client.on_connect = self._on_mqtt_connect
             self.mqtt_client.on_message = self._on_mqtt_message
             self.mqtt_client.on_disconnect = self._on_mqtt_disconnect
             
-            # Last Will Testament
             self.mqtt_client.will_set(
                 self.availability_topic,
                 payload="offline",
@@ -516,68 +487,63 @@ class MQTTBridge:
                 retain=True
             )
             
-            # Connexion
-            logger.info(f"Connexion au broker MQTT: {self.mqtt_broker}:{self.mqtt_port}")
-            self.mqtt_client.connect(self.mqtt_broker, self.mqtt_port, 60)
+            logger.info(f"🌐 Connecting to MQTT broker: {self.config['mqtt_broker']}:{self.config['mqtt_port']}")
+            self.mqtt_client.connect(
+                self.config['mqtt_broker'],
+                self.config['mqtt_port'],
+                60
+            )
             self.mqtt_client.loop_start()
             
             return True
             
         except Exception as e:
-            logger.error(f"Erreur configuration MQTT: {e}")
+            logger.error(f"❌ MQTT configuration error: {e}")
             return False
-            
+
     def _on_mqtt_connect(self, client, userdata, flags, rc):
-        """Callback connexion MQTT"""
+        """MQTT connection callback"""
         if rc == 0:
-            logger.info("Connecté au broker MQTT")
+            logger.info("✅ Connected to MQTT broker")
             
-            # Publication de la disponibilité
             client.publish(self.availability_topic, "online", qos=1, retain=True)
-            
-            # Souscription aux commandes
             client.subscribe(f"{self.command_topic}/#", qos=1)
-            logger.info(f"Souscription à: {self.command_topic}/#")
+            logger.info(f"📡 Subscribed to: {self.command_topic}/#")
             
-            # Auto-discovery Home Assistant
-            if self.auto_discovery:
+            if self.config['auto_discovery']:
                 self._publish_discovery()
-                
         else:
-            logger.error(f"Échec connexion MQTT, code: {rc}")
-            
+            logger.error(f"❌ MQTT connection failed, code: {rc}")
+
     def _on_mqtt_disconnect(self, client, userdata, rc):
-        """Callback déconnexion MQTT"""
+        """MQTT disconnection callback"""
         if rc != 0:
-            logger.warning(f"Déconnexion MQTT inattendue, code: {rc}")
-            
+            logger.warning(f"⚠️ Unexpected MQTT disconnection, code: {rc}")
+
     def _on_mqtt_message(self, client, userdata, msg):
-        """Callback réception message MQTT"""
+        """MQTT message received callback"""
         try:
             topic = msg.topic
             payload = msg.payload.decode('utf-8')
             
-            logger.debug(f"Message MQTT reçu - Topic: {topic}, Payload: {payload}")
+            logger.debug(f"📨 MQTT message - Topic: {topic}, Payload: {payload}")
             
-            # Extraction de la commande
             command = topic.replace(f"{self.command_topic}/", "")
-            
-            # Traitement de la commande
             self._process_command(command, payload)
             
         except Exception as e:
-            logger.error(f"Erreur traitement message MQTT: {e}")
-            
-    def _process_command(self, command, payload):
-        """Traitement des commandes MQTT"""
+            logger.error(f"❌ MQTT message processing error: {e}")
+
+    def _process_command(self, command: str, payload: str):
+        """Process MQTT command"""
         if not self.tv or not self.tv.connected:
-            logger.warning("TV non connectée, commande ignorée")
+            logger.warning("⚠️ TV not connected, command ignored")
             return
-            
+        
         try:
             payload_lower = payload.lower()
             
-            # Commandes power
+            # Power commands
             if command == "power":
                 if payload_lower == "on":
                     self.tv.power_on()
@@ -589,57 +555,55 @@ class MQTTBridge:
                     else:
                         self.tv.power_on()
                         
-            # Commandes volume
+            # Volume commands
             elif command == "volume":
                 if payload_lower == "up":
                     self.tv.volume_up()
                 elif payload_lower == "down":
                     self.tv.volume_down()
                 elif payload.isdigit():
-                    # Volume spécifique (à implémenter)
-                    logger.warning("Volume spécifique non supporté")
+                    self.tv.set_volume(int(payload))
                     
             # Mute
             elif command == "mute":
                 self.tv.mute()
                 
-            # Changement de source
+            # Source
             elif command == "source":
                 self.tv.set_source(payload)
                 
-            # Chaînes
+            # Channel
             elif command == "channel":
                 if payload_lower == "up":
                     self.tv.channel_up()
                 elif payload_lower == "down":
                     self.tv.channel_down()
                 elif payload.isdigit():
-                    # Chaîne spécifique (à implémenter)
-                    logger.warning("Chaîne spécifique non supportée")
+                    self.tv.set_channel(int(payload))
                     
             # Navigation
             elif command == "navigate":
                 self.tv.navigate(payload)
                 
-            # Touche spécifique
+            # Raw key
             elif command == "key":
                 self.tv.send_key(payload)
                 
             else:
-                logger.warning(f"Commande inconnue: {command}")
-                
-            # Publication de l'état après commande
-            time.sleep(0.5)
+                logger.warning(f"⚠️ Unknown command: {command}")
+            
+            # Publish state after command
+            time.sleep(0.1)
             self._publish_state()
             
         except Exception as e:
-            logger.error(f"Erreur traitement commande: {e}")
-            
+            logger.error(f"❌ Command processing error: {e}")
+
     def _publish_state(self):
-        """Publication de l'état de la TV"""
-        if not self.tv:
+        """Publish TV state to MQTT"""
+        if not self.tv or not self.mqtt_client:
             return
-            
+        
         try:
             state_data = {
                 'power': self.tv.state['power'],
@@ -650,7 +614,7 @@ class MQTTBridge:
                 'timestamp': datetime.now().isoformat()
             }
             
-            # Publication de l'état global
+            # Publish global state
             self.mqtt_client.publish(
                 self.state_topic,
                 json.dumps(state_data),
@@ -658,7 +622,7 @@ class MQTTBridge:
                 retain=True
             )
             
-            # Publication des états individuels
+            # Publish individual states
             for key, value in state_data.items():
                 if key != 'timestamp':
                     self.mqtt_client.publish(
@@ -667,155 +631,120 @@ class MQTTBridge:
                         qos=1,
                         retain=True
                     )
-                    
-            logger.debug(f"État publié: {state_data}")
+            
+            logger.debug(f"State published: {state_data}")
             
         except Exception as e:
-            logger.error(f"Erreur publication état: {e}")
-            
+            logger.error(f"❌ State publishing error: {e}")
+
     def _publish_discovery(self):
-        """Publication des entités pour Home Assistant auto-discovery"""
-        logger.info("Publication de la configuration auto-discovery")
+        """Publish Home Assistant discovery configuration"""
+        logger.info("📢 Publishing Home Assistant auto-discovery")
         
         device_info = {
-            "identifiers": [f"hisense_tv_{self.tv_name}"],
-            "name": f"Hisense TV {self.tv_name.capitalize()}",
+            "identifiers": [f"hisense_tv_{self.config['tv_name']}"],
+            "name": f"Hisense TV {self.config['tv_name'].capitalize()}",
             "manufacturer": "Hisense",
-            "model": "Vidaa TV",
+            "model": "Vidaa U",
             "sw_version": "1.0.0"
         }
         
         # Media Player
         media_player_config = {
-            "name": f"Hisense TV {self.tv_name.capitalize()}",
-            "unique_id": f"hisense_tv_{self.tv_name}_media_player",
-            "device": device_info,
-            "state_topic": f"{self.state_topic}/power",
+            "name": f"Hisense TV {self.config['tv_name'].capitalize()}",
+            "unique_id": f"hisense_tv_{self.config['tv_name']}_media_player",
             "command_topic": f"{self.command_topic}/power",
-            "payload_on": "ON",
-            "payload_off": "OFF",
-            "availability_topic": self.availability_topic,
-            "icon": "mdi:television"
-        }
-        
-        self.mqtt_client.publish(
-            f"homeassistant/media_player/{self.tv_name}/config",
-            json.dumps(media_player_config),
-            qos=1,
-            retain=True
-        )
-        
-        # Switch Power
-        switch_config = {
-            "name": f"Hisense TV {self.tv_name.capitalize()} Power",
-            "unique_id": f"hisense_tv_{self.tv_name}_power",
-            "device": device_info,
             "state_topic": f"{self.state_topic}/power",
-            "command_topic": f"{self.command_topic}/power",
             "payload_on": "on",
             "payload_off": "off",
             "state_on": "ON",
             "state_off": "OFF",
             "availability_topic": self.availability_topic,
+            "device": device_info,
+            "icon": "mdi:television"
+        }
+        
+        self.mqtt_client.publish(
+            f"homeassistant/media_player/{self.config['tv_name']}/config",
+            json.dumps(media_player_config),
+            qos=1,
+            retain=True
+        )
+        
+        # Power switch
+        switch_config = {
+            "name": f"Hisense TV {self.config['tv_name'].capitalize()} Power",
+            "unique_id": f"hisense_tv_{self.config['tv_name']}_power",
+            "command_topic": f"{self.command_topic}/power",
+            "state_topic": f"{self.state_topic}/power",
+            "payload_on": "on",
+            "payload_off": "off",
+            "state_on": "ON",
+            "state_off": "OFF",
+            "availability_topic": self.availability_topic,
+            "device": device_info,
             "icon": "mdi:power"
         }
         
         self.mqtt_client.publish(
-            f"homeassistant/switch/{self.tv_name}_power/config",
+            f"homeassistant/switch/{self.config['tv_name']}_power/config",
             json.dumps(switch_config),
             qos=1,
             retain=True
         )
         
-        # Sensor Volume
-        volume_config = {
-            "name": f"Hisense TV {self.tv_name.capitalize()} Volume",
-            "unique_id": f"hisense_tv_{self.tv_name}_volume",
-            "device": device_info,
+        # Volume sensor
+        volume_sensor = {
+            "name": f"Hisense TV {self.config['tv_name'].capitalize()} Volume",
+            "unique_id": f"hisense_tv_{self.config['tv_name']}_volume",
             "state_topic": f"{self.state_topic}/volume",
             "availability_topic": self.availability_topic,
             "unit_of_measurement": "%",
+            "device": device_info,
             "icon": "mdi:volume-high"
         }
         
         self.mqtt_client.publish(
-            f"homeassistant/sensor/{self.tv_name}_volume/config",
-            json.dumps(volume_config),
+            f"homeassistant/sensor/{self.config['tv_name']}_volume/config",
+            json.dumps(volume_sensor),
             qos=1,
             retain=True
         )
         
-        # Switch Mute
-        mute_config = {
-            "name": f"Hisense TV {self.tv_name.capitalize()} Mute",
-            "unique_id": f"hisense_tv_{self.tv_name}_mute",
-            "device": device_info,
-            "state_topic": f"{self.state_topic}/muted",
-            "command_topic": f"{self.command_topic}/mute",
-            "payload_on": "true",
-            "payload_off": "false",
-            "state_on": "True",
-            "state_off": "False",
-            "availability_topic": self.availability_topic,
-            "icon": "mdi:volume-mute"
-        }
-        
-        self.mqtt_client.publish(
-            f"homeassistant/switch/{self.tv_name}_mute/config",
-            json.dumps(mute_config),
-            qos=1,
-            retain=True
-        )
-        
-        # Sensor Source
-        source_config = {
-            "name": f"Hisense TV {self.tv_name.capitalize()} Source",
-            "unique_id": f"hisense_tv_{self.tv_name}_source",
-            "device": device_info,
-            "state_topic": f"{self.state_topic}/source",
-            "availability_topic": self.availability_topic,
-            "icon": "mdi:video-input-hdmi"
-        }
-        
-        self.mqtt_client.publish(
-            f"homeassistant/sensor/{self.tv_name}_source/config",
-            json.dumps(source_config),
-            qos=1,
-            retain=True
-        )
-        
-        logger.info("Configuration auto-discovery publiée")
-        
-    def setup_tv(self):
-        """Configuration de la connexion TV"""
+        logger.info("✅ Discovery configuration published")
+
+    def setup_tv(self) -> bool:
+        """Initialize TV connection"""
         try:
-            logger.info(f"Initialisation de la TV: {self.tv_ip}")
-            self.tv = HisenseTV(self.tv_ip, self.ssl_enabled)
+            logger.info(f"📺 Initializing TV: {self.config['tv_ip']}:{self.config['tv_port']}")
+            self.tv = HisenseTV(
+                self.config['tv_ip'],
+                self.config['tv_port'],
+                self.config['tv_ssl']
+            )
             
-            # Lancement de la connexion dans un thread séparé
             tv_thread = Thread(target=self.tv.connect, daemon=True)
             tv_thread.start()
             
-            # Attente de la connexion
             timeout = 10
             start_time = time.time()
             while not self.tv.connected and (time.time() - start_time) < timeout:
                 time.sleep(0.5)
-                
+            
             if self.tv.connected:
-                logger.info("TV connectée avec succès")
+                logger.info("✅ TV connected successfully")
                 return True
             else:
-                logger.warning("Timeout connexion TV")
+                logger.warning("⏱️ TV connection timeout")
                 return False
                 
         except Exception as e:
-            logger.error(f"Erreur configuration TV: {e}")
+            logger.error(f"❌ TV setup error: {e}")
             return False
-            
+
     def state_monitor(self):
-        """Surveillance de l'état de la TV"""
-        logger.info("Démarrage de la surveillance d'état")
+        """Monitor TV state and publish updates"""
+        logger.info("📊 Starting state monitoring")
         
         while self.running:
             try:
@@ -824,68 +753,69 @@ class MQTTBridge:
                     time.sleep(1)
                     self._publish_state()
                 else:
-                    # Tentative de reconnexion
-                    logger.warning("TV déconnectée, tentative de reconnexion...")
-                    self.mqtt_client.publish(
-                        self.availability_topic,
-                        "offline",
-                        qos=1,
-                        retain=True
-                    )
-                    
-                    if self.setup_tv():
+                    logger.warning("⚠️ TV disconnected, attempting reconnection...")
+                    if self.mqtt_client:
                         self.mqtt_client.publish(
                             self.availability_topic,
-                            "online",
+                            "offline",
                             qos=1,
                             retain=True
                         )
-                        
-                time.sleep(self.scan_interval)
+                    
+                    if self.setup_tv():
+                        if self.mqtt_client:
+                            self.mqtt_client.publish(
+                                self.availability_topic,
+                                "online",
+                                qos=1,
+                                retain=True
+                            )
+                
+                time.sleep(self.config['scan_interval'])
                 
             except Exception as e:
-                logger.error(f"Erreur surveillance état: {e}")
-                time.sleep(self.scan_interval)
-                
-    def run(self):
-        """Démarrage du bridge"""
-        logger.info("=== Démarrage de Hisense TV MQTT Bridge ===")
+                logger.error(f"❌ State monitoring error: {e}")
+                time.sleep(self.config['scan_interval'])
+
+    def run(self) -> bool:
+        """Start the bridge"""
+        logger.info("=" * 60)
+        logger.info("🚀 Starting Hisense TV MQTT Bridge")
+        logger.info("=" * 60)
         
         self.running = True
         
-        # Configuration MQTT
+        # Setup MQTT
         if not self.setup_mqtt():
-            logger.error("Échec configuration MQTT")
+            logger.error("❌ MQTT setup failed")
             return False
-            
-        # Configuration TV
+        
+        # Setup TV
         if not self.setup_tv():
-            logger.error("Échec configuration TV")
+            logger.error("❌ TV setup failed")
             return False
-            
-        # Démarrage de la surveillance
+        
+        # Start monitoring
         monitor_thread = Thread(target=self.state_monitor, daemon=True)
         monitor_thread.start()
         
-        logger.info("Bridge démarré avec succès")
+        logger.info("✅ Bridge started successfully")
         
-        # Boucle principale
         try:
             while self.running:
                 time.sleep(1)
         except KeyboardInterrupt:
-            logger.info("Arrêt demandé")
+            logger.info("🛑 Shutdown requested")
             self.stop()
-            
-        return True
         
+        return True
+
     def stop(self):
-        """Arrêt du bridge"""
-        logger.info("Arrêt du bridge...")
+        """Shutdown the bridge"""
+        logger.info("🛑 Stopping bridge...")
         
         self.running = False
         
-        # Publication de l'indisponibilité
         if self.mqtt_client:
             self.mqtt_client.publish(
                 self.availability_topic,
@@ -895,21 +825,26 @@ class MQTTBridge:
             )
             self.mqtt_client.loop_stop()
             self.mqtt_client.disconnect()
-            
-        # Fermeture de la connexion TV
-        if self.tv and self.tv.ws:
-            self.tv.ws.close()
-            
-        logger.info("Bridge arrêté")
+        
+        if self.tv:
+            self.tv.disconnect()
+        
+        logger.info("✅ Bridge stopped")
+
+
+# ============================================================================
+# MAIN
+# ============================================================================
 
 def main():
-    """Fonction principale"""
+    """Main entry point"""
     try:
-        bridge = MQTTBridge()
+        bridge = MQTTBridge(CONFIG)
         bridge.run()
     except Exception as e:
-        logger.error(f"Erreur fatale: {e}", exc_info=True)
+        logger.error(f"❌ Fatal error: {e}", exc_info=True)
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

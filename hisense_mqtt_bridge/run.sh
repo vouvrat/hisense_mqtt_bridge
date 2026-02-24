@@ -12,8 +12,9 @@ export MQTT_USER=$(bashio::config 'mqtt_user')
 export MQTT_PASSWORD=$(bashio::config 'mqtt_password')
 export MQTT_TOPIC_PREFIX=$(bashio::config 'mqtt_topic_prefix')
 export TV_IP=$(bashio::config 'tv_ip')
+export TV_PORT=$(bashio::config 'tv_port')
 export TV_NAME=$(bashio::config 'tv_name')
-export SSL_ENABLED=$(bashio::config 'ssl_enabled')
+export TV_SSL=$(bashio::config 'tv_ssl')
 export AUTO_DISCOVERY=$(bashio::config 'auto_discovery')
 export SCAN_INTERVAL=$(bashio::config 'scan_interval')
 export LOG_LEVEL=$(bashio::config 'log_level')
@@ -31,10 +32,10 @@ fi
 
 bashio::log.info "Configuration:"
 bashio::log.info "- Broker MQTT: ${MQTT_BROKER}:${MQTT_PORT}"
-bashio::log.info "- TV IP: ${TV_IP}"
+bashio::log.info "- TV IP: ${TV_IP}:${TV_PORT}"
 bashio::log.info "- TV Name: ${TV_NAME}"
+bashio::log.info "- TV SSL: ${TV_SSL}"
 bashio::log.info "- Topic prefix: ${MQTT_TOPIC_PREFIX}"
-bashio::log.info "- SSL: ${SSL_ENABLED}"
 bashio::log.info "- Auto-discovery: ${AUTO_DISCOVERY}"
 
 # Lancement du script Python
