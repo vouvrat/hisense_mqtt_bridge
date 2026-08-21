@@ -35,22 +35,7 @@
   - Exemples MQTT
   - Home Assistant integration
 
-### Pour Développeurs
-- 📄 **[REFACTORING.md](../REFACTORING.md)**
-  - Qu'est-ce qui a changé
-  - Pourquoi les changements
-  - Améliorations de code
-
-- 📄 **[TESTING.md](../TESTING.md)**
-  - Tests et diagnostics
-  - Comment déboguer
-  - Scripts de test
-
-### Pour DevOps
-- 📄 **[DOCKER.md](../DOCKER.md)**
-  - Docker et Docker Compose
-  - Déploiement conteneurs
-
+### Pour Développeurs / DevOps
 - 📄 **[DEPLOYMENT_CHECKLIST.md](DEPLOYMENT_CHECKLIST.md)**
   - Checklist production
   - Structure GitHub
@@ -65,20 +50,17 @@
 | **Structure** | ✅ Complète | Tous fichiers présents |
 | **Configuration** | ✅ Corrigée | tv_ssl au lieu de ssl_enabled |
 | **Port** | ✅ Correct | 10001 (Vidaa-U) |
-| **Scripts** | ✅ Fonctionnels | run.sh et finish scripts OK |
-| **Docker** | ✅ Ready | Multi-architecture |
+| **Scripts** | ✅ Fonctionnels | run + finish scripts (services.d) OK |
+| **Docker** | ✅ Ready | aarch64 + amd64 |
 | **Documentation** | ✅ Complète | 100% en français |
-| **Tests** | ✅ Passés | Validation réussie |
-| **Production** | ✅ Ready | Prêt à déployer! |
+| **Tests** | ⚠️ Manuels | Pas de suite de tests automatisée — voir tasks/historique.md pour l'audit de code |
 
 ---
 
 ## 🚀 Déploiement Rapide
 
 ### Téléchargement (2 min)
-1. Créer repository GitHub
-2. Pousser le code
-3. URL: https://github.com/yourusername/hisense-mqtt-addon
+1. Dépôt GitHub : https://github.com/vouvrat/hisense_mqtt_bridge
 
 ### Installation Home Assistant (5 min)
 1. Paramètres → Addons → Boutiques d'addons
@@ -103,7 +85,7 @@ hisense_mqtt_bridge/
 ├── config.yaml              ← Configuration UI
 ├── Dockerfile               ← Image Docker
 ├── build.yaml               ← Build config
-├── run.sh                   ← Script boot (root)
+├── requirements.txt         ← Dépendances Python (source unique)
 ├── rootfs/
 │   ├── app/
 │   │   └── hisense_mqtt_bridge.py   ← Application
@@ -126,9 +108,6 @@ slug: hisense_mqtt_bridge
 arch:
   - aarch64
   - amd64
-  - armv7
-  - armhf
-  - i386
 
 options:
   tv_ip: ""                           # OBLIGATOIRE
@@ -218,7 +197,7 @@ Pour plus d'aide → **[HOME_ASSISTANT.md - Troubleshooting](HOME_ASSISTANT.md#d
 → **[HOME_ASSISTANT.md](HOME_ASSISTANT.md)**
 
 ### "Je veux comprendre les changements"
-→ **[ADDON_READY.md](ADDON_READY.md)** + **[REFACTORING.md](../REFACTORING.md)**
+→ **[ADDON_READY.md](ADDON_READY.md)** + tasks/historique.md (audit et corrections)
 
 ### "Je dois vérifier que c'est OK"
 → **[DEPLOYMENT_CHECKLIST.md](DEPLOYMENT_CHECKLIST.md)**
@@ -228,9 +207,6 @@ Pour plus d'aide → **[HOME_ASSISTANT.md - Troubleshooting](HOME_ASSISTANT.md#d
 
 ### "J'ai un problème!"
 → **[HOME_ASSISTANT.md - Troubleshooting](HOME_ASSISTANT.md#dépannage)**
-
-### "Je veux déboguer"
-→ **[TESTING.md](../TESTING.md)**
 
 ### "Je dois configurer MQTT"
 → **[CONFIGURATION.md](../CONFIGURATION.md)**
@@ -273,8 +249,8 @@ Pour Home Assistant:
 - [Community](https://community.home-assistant.io/)
 
 Pour ce projet:
-- All docs dans ce même dossier
-- Tests scripts: test_*.sh dans le root
+- Docs dans ce dossier et au niveau parent
+- Historique des audits/corrections: tasks/historique.md
 - Code principal: rootfs/app/hisense_mqtt_bridge.py
 
 ---
@@ -282,23 +258,20 @@ Pour ce projet:
 ## 🎊 Status Final
 
 ```
-✅ ADDON EST PRÊT POUR HOEM ASSISTANT!
+✅ ADDON PRÊT POUR HOME ASSISTANT
 
 ✅ Configuration complète
 ✅ Fichiers corrects
-✅ Tests validés
+⚠️ Validation manuelle (pas de suite de tests automatisée)
 ✅ Documentation française
-✅ Support Vidaa-U 100%
-✅ Multi-architecture
-✅ Production-ready
+✅ aarch64 + amd64
 
 👉 Lisez ADDON_READY.md pour commencer!
 ```
 
 ---
 
-**Updated:** Février 24, 2025  
-**Version:** 2.0.0  
-**Status:** ✅ **PRODUCTION READY**
+**Updated:** 21 août 2026 (revue documentation)
+**Version:** 2.0.0
 
 Pour commencer: **[ADDON_READY.md](ADDON_READY.md)**

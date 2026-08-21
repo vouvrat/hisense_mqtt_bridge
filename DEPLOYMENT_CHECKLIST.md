@@ -1,7 +1,7 @@
 # ✅ CHECKLIST - PRÊT POUR DÉPLOIEMENT HOME ASSISTANT
 
-**Date:** Février 24, 2025  
-**Status:** ✅ **PRÊT POUR LA PRODUCTION**
+**Date de création:** Février 24, 2025
+**Dernière revue documentation:** 21 août 2026
 
 ---
 
@@ -12,14 +12,16 @@
 - [x] Changé port par défaut de 36669 → 10001 (Vidaa-U)
 - [x] Changé `ssl_enabled` → `tv_ssl`
 - [x] Ajouté validation pour `tv_ip` et `mqtt_broker`
-- [x] Ajouté armhf à la liste des architectures
 - [x] Mise à jour du schema pour `tv_ssl` (booléen)
+- [x] (2026-08-21) Architectures réduites à aarch64/amd64 — l'image de base
+  HA à jour ne publie plus armv7/armhf/i386 (tasks/historique.md P16)
 
-### ✅ Script de Démarrage (run.sh)
+### ✅ Script de Démarrage (rootfs/etc/services.d/hisense-mqtt/run)
 - [x] Changé `SSL_ENABLED` → `TV_SSL`
 - [x] Ajouté validation des paramètres obligatoires
 - [x] Ajouté export de `LOG_LEVEL`
 - [x] Amélioré les messages de log
+- [x] (2026-08-21) L'ancien `run.sh` racine (doublon inutilisé) supprimé
 
 ### ✅ Dockerfile
 - [x] Utilise les images de base Home Assistant
@@ -39,10 +41,11 @@
 - [x] Examples MQTT fournis
 - [x] Troubleshooting inclus
 
-### ✅ Tests de Validation
-- [x] test_addon.sh - Validation addon (exécutable)
-- [x] test_integration.sh - Tests complets (préparé)
-- [x] quick_test.sh - Test rapide (fonctionnel)
+### ⚠️ Validation
+Pas de suite de tests automatisée (les scripts test_addon.sh/
+test_integration.sh/quick_test.sh mentionnés dans une version antérieure de
+ce document n'ont jamais existé). Validation = revue de code manuelle, voir
+tasks/historique.md.
 
 ---
 
@@ -62,16 +65,16 @@ Code:
   ✅ Port 10001 par défaut
 
 Service:
-  ✅ run.sh exécutable
-  ✅ finish.sh en place
+  ✅ run (services.d) exécutable
+  ✅ finish en place (avec backoff s6-sleep)
   ✅ Validation des paramètres
   ✅ Export des variables correct
 
 Docker:
   ✅ Dockerfile complet
-  ✅ Architectures: aarch64, amd64, armv7, armhf, i386
+  ✅ Architectures: aarch64, amd64
   ✅ Labels Home Assistant
-  ✅ Dépendances pinned
+  ✅ Dépendances via requirements.txt (source unique)
 
 Documentation:
   ✅ HOME_ASSISTANT.md complet
@@ -80,47 +83,40 @@ Documentation:
   ✅ Exemples MQTT
   ✅ Troubleshooting
 
-Tests:
-  ✅ All checks passed
-  ✅ Prêt pour le déploiement
+Validation:
+  ⚠️ Revue de code manuelle uniquement (voir tasks/historique.md)
+  ⚠️ Pas de test réel TV/MQTT effectué dans cet environnement
 ```
 
 ---
 
 ## 🚀 Prochaines Étapes - Déploiement
 
-### Pour tester en local
+### Pour valider avant déploiement
 
 ```bash
-# 1. Valider la configuration
-./test_addon.sh
-
-# 2. Tester quick
-bash quick_test.sh
-
-# 3. Voir les logs
-cat hisense_mqtt_bridge/rootfs/app/hisense_mqtt_bridge.py | head -50
+python3 -m py_compile hisense_mqtt_bridge/rootfs/app/hisense_mqtt_bridge.py
 ```
 
 ### Pour déployer sur Home Assistant
 
 **Option 1: Repository GitHub (Recommandé)**
+
+Le dépôt existe déjà : https://github.com/vouvrat/hisense_mqtt_bridge
+
 ```bash
-# 1. Créer repository GitHub
-    https://github.com/yourusername/hisense-mqtt-addon
-
-# 2. Ajouter addon repository sur Home Assistant
+# 1. Ajouter le repository sur Home Assistant
     Paramètres → Addons → Boutiques d'addons → Créer une boutique
-    URL: https://github.com/yourusername/hisense-mqtt-addon
+    URL: https://github.com/vouvrat/hisense_mqtt_bridge
 
-# 3. Installer depuis la boutique
+# 2. Installer depuis la boutique
     Rechercher "Hisense" → Installer
 
-# 4. Configurer l'addon
+# 3. Configurer l'addon
     TV IP: votre_ip_tv
     MQTT Broker: votre_ip_mqtt
 
-# 5. Démarrer
+# 4. Démarrer
     Cliquez sur "Démarrer"
 ```
 
@@ -137,17 +133,16 @@ cat hisense_mqtt_bridge/rootfs/app/hisense_mqtt_bridge.py | head -50
 
 ---
 
-## 📦 Structure pour GitHub
+## 📦 Structure du Repository (actuelle)
 
-Créer ce repository:
 ```
-hisense-mqtt-addon/
-├── hisense_mqtt_bridge/     ← Dossier de l'addon
-│   ├── config.yaml          ← Configuration
-│   ├── Dockerfile           ← Image Docker
-│   ├── build.yaml           ← Build config
-│   ├── run.sh               ← Entrypoint
-│   └── rootfs/              ← Contenu addon
+hisense_mqtt_bridge/               ← racine du dépôt GitHub
+├── hisense_mqtt_bridge/           ← dossier de l'addon
+│   ├── config.yaml                ← Configuration
+│   ├── Dockerfile                 ← Image Docker
+│   ├── build.yaml                 ← Build config
+│   ├── requirements.txt           ← Dépendances Python
+│   └── rootfs/                    ← Contenu addon
 │       ├── app/
 │       │   └── hisense_mqtt_bridge.py
 │       └── etc/
@@ -155,45 +150,29 @@ hisense-mqtt-addon/
 │               └── hisense-mqtt/
 │                   ├── run
 │                   └── finish
-├── README.md                ← Documentation générale
-├── LICENSE                  ← Licence
-└── .gitignore
+├── ADDON_READY.md, CONFIGURATION.md, DEPLOYMENT_CHECKLIST.md,
+│   HOME_ASSISTANT.md              ← Documentation
+├── LICENCE                        ← Licence (MIT)
+├── repository.yaml
+└── tasks/                         ← todo.md, lessons.md, historique.md
 ```
 
 ---
 
-## 🧪 Tests Complets Effectués
+## 🧪 État de la Validation (2026-08-21)
 
-### Phase 1: Configuration ✅
-- [x] config.yaml valide
-- [x] Variables correctes (tv_ssl, pas ssl_enabled)
-- [x] Port 10001 par défaut
-- [x] Schema valide
-- [x] Architectures supportées
+Pas de suite de tests automatisée. Ce qui a réellement été vérifié :
 
-### Phase 2: Scripts de Service ✅
-- [x] run.sh exécutable
-- [x] finish.sh présent
-- [x] Variables correctes expor tées
-- [x] Validation des paramètres
+- [x] Syntaxe Python valide (`py_compile`)
+- [x] config.yaml : schema cohérent avec les variables lues par le code
+- [x] Dockerfile : dépendances synchronisées via requirements.txt
+- [x] Architectures : aarch64/amd64 (image de base vérifiée disponible)
+- [x] Audit de code complet (29 points, voir tasks/historique.md)
+- [x] 4 critiques + 14 majeurs corrigés (tasks/historique.md)
 
-### Phase 3: Docker ✅
-- [x] Dockerfile complet
-- [x] Dépendances installées
-- [x] Labels Home Assistant
-- [x] rootfs copié correctement
-
-### Phase 4: Application Python ✅
-- [x] Syntaxe valide
-- [x] Classes définies correctement
-- [x] TV_SSL lu depuis environment
-- [x] Pas de variables obsolètes
-
-### Phase 5: Documentation ✅
-- [x] HOME_ASSISTANT.md complet
-- [x] CONFIGURATION.md disponible
-- [x] Examples MQTT
-- [x] Troubleshooting
+**Non vérifié** : connexion réelle à une TV Hisense, connexion réelle à un
+broker MQTT, build Docker complet — nécessite un déploiement sur une
+instance Home Assistant réelle.
 
 ---
 
@@ -230,7 +209,7 @@ tv_port: 10001
 tv_ssl: false
 ```
 
-### run.sh
+### Script de démarrage (rootfs/etc/services.d/hisense-mqtt/run)
 **Avant:**
 ```bash
 SSL_ENABLED=$(bashio::config 'ssl_enabled')
@@ -245,28 +224,16 @@ export TV_SSL
 
 ---
 
-## ✅ Validation Finale
+## ✅ État Actuel
 
 ```
-L'addon est PRÊT pour Home Assistant! ✅
+Configuration correcte
+Scripts de service OK (backoff s6 en place)
+Docker configuré (aarch64/amd64, image de base à jour)
+Python : syntaxe valide, 4 critiques + 14 majeurs corrigés
+Documentation à jour (purgée des références obsolètes)
 
-Vérifications complètées:
-  ✅ Configuration correcte
-  ✅ Scripts de service OK
-  ✅ Docker configuré
-  ✅ Python valide
-  ✅ Documentation complète
-  ✅ Tests de validation réussis
-
-Le produit final:
-  ✅ Plug & Play pour Home Assistant
-  ✅ Configuration simple via UI
-  ✅ Logs accessibles
-  ✅ MQTT auto-discovery
-  ✅ Entités Home Assistant automatiques
-  ✅ Compatible Vidaa-U 100%
-
-Prêt à déployer! 🚀
+Non vérifié : build Docker réel, connexion TV/MQTT réelle
 ```
 
 ---
@@ -278,10 +245,9 @@ Consultez: **HOME_ASSISTANT.md**
 
 ### Pour les développeurs
 1. Consultez: **CONFIGURATION.md**
-2. Consultez: **TESTING.md**
-3. Consultez: **REFACTORING.md**
+2. Consultez: **tasks/historique.md** (audit de code et corrections)
 
 ---
 
-**Date de validation:** Février 24, 2025  
-**Status:** ✅ **READY FOR PRODUCTION DEPLOYMENT**
+**Date de création:** Février 24, 2025
+**Dernière revue documentation:** 21 août 2026

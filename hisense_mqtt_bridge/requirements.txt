@@ -1,0 +1,7 @@
+# paho-mqtt volontairement figé en 1.6.x (API callback v1) : le code utilise
+# les signatures _on_mqtt_connect(client, userdata, flags, rc) etc. Une mise
+# à jour vers paho-mqtt 2.x change ces signatures (API v2) et casserait les
+# callbacks silencieusement sans adaptation du code.
+paho-mqtt==1.6.1
+websocket-client==1.6.4
+pycryptodome==3.19.0

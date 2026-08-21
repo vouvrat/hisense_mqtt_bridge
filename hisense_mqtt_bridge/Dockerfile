@@ -1,4 +1,4 @@
-ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base-python:3.11-alpine3.18
+ARG BUILD_FROM=ghcr.io/home-assistant/base-python:3.14-alpine3.24
 FROM ${BUILD_FROM}
 
 # Variables de build
@@ -6,21 +6,17 @@ ARG BUILD_VERSION
 ARG BUILD_ARCH
 
 # Installation des dépendances système
+# (python3/pip déjà fournis par l'image de base ghcr.io/home-assistant/base-python,
+# vérifié dans son Dockerfile source : ensurepip + symlinks python3/pip3 —
+# mosquitto-clients et jq retirés, non utilisés par le code ni les scripts)
 RUN apk add --no-cache \
-    python3 \
-    py3-pip \
     openssl \
-    mosquitto-clients \
-    jq \
     tzdata
 
-# Installation des dépendances Python
-RUN pip3 install --no-cache-dir \
-    paho-mqtt==1.6.1 \
-    websocket-client==1.6.4 \
-    requests==2.31.0 \
-    asyncio==3.4.3 \
-    pycryptodome==3.19.0
+# Installation des dépendances Python (source unique : requirements.txt)
+COPY requirements.txt /tmp/requirements.txt
+RUN pip3 install --no-cache-dir -r /tmp/requirements.txt && \
+    rm /tmp/requirements.txt
 
 # Copie de la structure rootfs (contient /app/hisense_mqtt_bridge.py)
 COPY rootfs /

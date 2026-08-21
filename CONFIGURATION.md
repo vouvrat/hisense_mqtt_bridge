@@ -99,8 +99,10 @@ When `AUTO_DISCOVERY=true`, the bridge automatically publishes MQTT device confi
 - Media Player
 - Power Switch
 - Volume Sensor
-- Mute Switch
-- Source Sensor
+
+(No Mute switch or Source sensor yet — mute/source/channel/navigation are
+controlled by publishing raw MQTT payloads to the `command/*` topics
+above, not via dedicated HA entities.)
 
 These will appear automatically in Home Assistant under **Settings → Devices & Services → MQTT**.
 

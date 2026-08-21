@@ -48,7 +48,7 @@ Ce guide vous explique comment installer et configurer l'addon Hisense MQTT Brid
 
 3. Entrez l'URL du dépôt:
    ```
-   https://github.com/yourusername/hisense-mqtt-addon
+   https://github.com/vouvrat/hisense_mqtt_bridge
    ```
 
 4. Cliquez sur **Créer**
@@ -191,7 +191,6 @@ Log Level: INFO
    - Media Player
    - Power Switch
    - Volume Sensor
-   - Source Sensor
 
 ---
 
@@ -201,11 +200,13 @@ Log Level: INFO
 
 L'addon publie automatiquement les configurations pour Home Assistant:
 
-- **Media Player** - Contrôle complet de la TV
+- **Media Player** - Contrôle power (on/off) via commande MQTT
 - **Power Switch** - Allumer/éteindre
 - **Volume Sensor** - Niveau du volume
-- **Mute Switch** - Couper/rétablir le son
-- **Source Sensor** - Entrée actuelle
+
+(Pas de switch Mute ni de sensor Source pour l'instant — mute/source/
+chaîne/navigation se pilotent par publication MQTT brute sur les topics
+`command/*`, voir section "Commandes MQTT Disponibles" ci-dessous.)
 
 Les entités apparaissent automatically dans:
 ```

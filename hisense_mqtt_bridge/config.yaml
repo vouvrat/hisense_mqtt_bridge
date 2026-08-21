@@ -1,26 +1,21 @@
 name: "Hisense TV MQTT Bridge"
 version: "2.0.0"
 slug: hisense_mqtt_bridge
-description: "Bridge MQTT pour contrôler une TV Hisense VIDAA-U avec support complet du protocole"
+description: "Bridge MQTT pour contrôler une TV Hisense VIDAA-U (power, volume, mute, source, chaîne, navigation) via topics MQTT"
 arch:
   - aarch64
   - amd64
-  - armv7
-  - armhf
-  - i386
 init: false
 startup: application
 boot: auto
-hassio_api: true
-homeassistant_api: true
 
 options:
-  mqtt_broker: "192.168.1.10"
+  mqtt_broker: ""
   mqtt_port: 1883
   mqtt_user: ""
   mqtt_password: ""
   mqtt_topic_prefix: "hisense_tv"
-  tv_ip: "192.168.1.100"
+  tv_ip: ""
   tv_port: 10001
   tv_name: "salon"
   tv_ssl: false
