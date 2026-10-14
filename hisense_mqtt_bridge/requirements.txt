@@ -4,4 +4,4 @@
 # callbacks silencieusement sans adaptation du code.
 paho-mqtt==1.6.1
 websocket-client==1.6.4
-pycryptodome==3.19.0
+pycryptodome==3.19.1
